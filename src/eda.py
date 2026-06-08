@@ -40,7 +40,7 @@ class Eda:
     def load_ipdata(self):
         try:
             
-            ip_data_path = os.path.normpath(self.ip_filepath)
+            ip_data_path = os.path.normpath(self.ip_to_country)
     
             if not os.path.exists(ip_data_path):
                 raise FileNotFoundError(f"Could not find the file at: {ip_data_path}")
@@ -144,8 +144,6 @@ class Eda:
 
     def bivariate_analysis(self):
         print('=' * 70)
-        
-
         for col in self.df.select_dtypes(include=['category']).columns:
             for num_cols in self.df.select_dtypes(include=['number', 'float']).columns:
                 agg_dict = {f'Amount of {num_cols} per {col}': 'count',
@@ -320,10 +318,12 @@ class Eda:
         if self.ip_df is not None:
             self.load_ipdata()
             self.univariate_analysis()
+            self.plot_numerical()
             self.plot_categorical()
             self.bivariate_analysis()
             self.integrate_geolocation()
             self.analyze_fraud_by_country()
+            
         self.cleanup_data()
         self.plot_numerical()
         self.feature_engineer()
