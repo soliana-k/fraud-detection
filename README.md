@@ -119,3 +119,5 @@ See `requirements.txt`. Key dependencies:
 - `imbalanced-learn`
 - `matplotlib`
 - `seaborn`
+
+# P.S for now the model training is run in the respective eda notebooks
