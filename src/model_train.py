@@ -11,7 +11,12 @@ import logging
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import re
+def clean_column_names(df):
+    df.columns = [re.sub(r'[\[\]\{\}\:\,\s"]', '_', str(col)) for col in df.columns]
+    return df
 class ModelTrain:
+    
     def __init__(self, x_train, y_train, x_test, y_test):
         self.x_train=x_train
         self.y_train=y_train
@@ -64,13 +69,6 @@ class ModelTrain:
 
 
     def train_and_evaluate_models(self, X_train, y_train, X_test, y_test):
-   
-        import re
-        
-        
-        def clean_column_names(df):
-            df.columns = [re.sub(r'[\[\]\{\}\:\,\s"]', '_', str(col)) for col in df.columns]
-            return df
 
         X_train = clean_column_names(X_train)
         X_test = clean_column_names(X_test)
@@ -100,11 +98,8 @@ class ModelTrain:
             )
         }
         
-
-        
         best_models = {}
 
-        
         for name, (model, params) in model_dict.items():
             logging.info(f"Starting Hyperparameter Tuning for {name}...")
             
