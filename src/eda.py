@@ -431,72 +431,73 @@ class DataPreprocessor:
     Handles scaling and encoding. Skips scaling for CreditCard dataset 
     (already PCA-transformed).
     """
-    def preprocess(self, df: pd.DataFrame, is_fraud: bool) -> pd.DataFrame:
+    def preprocess(self, X_train: pd.DataFrame, X_test: pd.DataFrame, is_fraud: bool) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Preprocess data: scale numerical features (if fraud) and one-hot encode categoricals.
+        Fit only on training data.
         
         Args:
-            df (pd.DataFrame): Input DataFrame.
+            X_train (pd.DataFrame): Training features.
+            X_test (pd.DataFrame): Test features.
             is_fraud (bool): Whether this is the Fraud dataset.
         
         Returns:
-            pd.DataFrame: Preprocessed DataFrame ready for modeling.
+            Tuple[pd.DataFrame, pd.DataFrame]: Preprocessed X_train, X_test.
         """
-        df = df.copy().reset_index(drop=True)
+        X_train = X_train.copy().reset_index(drop=True)
+        X_test = X_test.copy().reset_index(drop=True)
 
         if is_fraud:
             scaler = StandardScaler()
-            num_cols = df.select_dtypes(include=['float64', 'int64']).columns
+            num_cols = X_train.select_dtypes(include=['float64', 'int64']).columns
             cols_to_scale = [c for c in num_cols if c not in ['class', 'Class', 'user_id']]
             if cols_to_scale:
-                df[cols_to_scale] = scaler.fit_transform(df[cols_to_scale])
+                X_train[cols_to_scale] = scaler.fit_transform(X_train[cols_to_scale])
+                X_test[cols_to_scale] = scaler.transform(X_test[cols_to_scale])
         else:
             logger.info("CreditCard: Skipping scaling (already PCA transformed)")
 
         # One got encoding
         cat_cols = ['source', 'browser', 'sex', 'country']
-        cat_cols = [c for c in cat_cols if c in df.columns]
+        cat_cols = [c for c in cat_cols if c in X_train.columns]
         if cat_cols:
             encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
-            encoded = encoder.fit_transform(df[cat_cols])
-            encoded_df = pd.DataFrame(encoded, columns=encoder.get_feature_names_out(cat_cols))
-            df = df.drop(columns=cat_cols)
-            df = pd.concat([df, encoded_df], axis=1)
+            encoded_train = encoder.fit_transform(X_train[cat_cols])
+            encoded_test = encoder.transform(X_test[cat_cols])
+            encoded_train_df = pd.DataFrame(encoded_train, 
+                                          columns=encoder.get_feature_names_out(cat_cols),
+                                          index=X_train.index)
+            encoded_test_df = pd.DataFrame(encoded_test, 
+                                         columns=encoder.get_feature_names_out(cat_cols),
+                                         index=X_test.index)
+            X_train = X_train.drop(columns=cat_cols)
+            X_test = X_test.drop(columns=cat_cols)
 
-        return df
+            X_train = pd.concat([X_train, encoded_train_df], axis=1)
+            X_test = pd.concat([X_test, encoded_test_df], axis=1)
+
+        return X_train, X_test
 
 
 class ImbalanceHandler:
     """
     Handles class imbalance using SMOTE and provides before/after visualization.
     """
-    def handle(self, df: pd.DataFrame):
+    def handle(self, X_train, y_train, X_test, y_test):
         """
         Apply SMOTE oversampling to balance the training set.
         
         Args:
-            df (pd.DataFrame): Preprocessed DataFrame with target column.
+            X_train, y_train: Training data
+            X_test, y_test: Test data
         
         Returns:
             Tuple containing: X_train_res, y_train_res, X_test, y_test
         """
-
-        target_col = next((c for c in ['class', 'Class'] if c in df.columns), None)
-        if not target_col:
-            raise ValueError("Target column not found.")
-
-        X = df.drop(target_col, axis=1)
-        y = df[target_col]
-
-        print(f"\nOriginal Training Shape before SMOTE: {X.shape}")
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, stratify=y
-        )
-
         smote = SMOTE(random_state=42)
         X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
 
+        print(f'Training shape before SMOTE: {X_train.shape}')
         print(f"Resampled Training Shape after SMOTE: {X_train_res.shape}")
 
         self._plot_imbalance(y_train, y_train_res)
@@ -539,7 +540,7 @@ class FraudDetectionPipeline:
 
     def run(self):
         """
-        Execute the full pipeline: load → geo (if fraud) → EDA → clean → engineer → preprocess → balance.
+        Execute the full pipeline: load → geo (if fraud) → EDA → clean → split → engineer → preprocess → balance.
         
         Returns:
             Tuple: (X_train_resampled, y_train_resampled, X_test, y_test)
@@ -560,10 +561,25 @@ class FraudDetectionPipeline:
 
         df = self.cleaner.clean(df)
 
+        
+        target_col = next((c for c in ['class', 'Class'] if c in df.columns), None)
+        if not target_col:
+            raise ValueError("Target column not found.")
+        
+        X = df.drop(columns=[target_col])
+        y = df[target_col]
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, 
+            test_size=0.2, 
+            random_state=42, 
+            stratify=y
+        )
+
         if self.is_fraud:
-            df = self.feature_eng.engineer(df)
-        df = self.preprocessor.preprocess(df, self.is_fraud)
+            X_train = self.feature_eng.engineer(X_train)
+            X_test = self.feature_eng.engineer(X_test)  
 
-        return self.balancer.handle(df)
+        X_train, X_test = self.preprocessor.preprocess(X_train, X_test, self.is_fraud)
 
-
+        return self.balancer.handle(X_train, y_train, X_test, y_test)
