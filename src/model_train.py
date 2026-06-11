@@ -4,7 +4,7 @@ from sklearn.metrics import auc, roc_auc_score, average_precision_score, f1_scor
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 import logging
@@ -24,8 +24,8 @@ class ModelTrain:
         self.y_test=y_test
         
 
-    def train_log_reg(self):
-        lg=LogisticRegression(max_iter=500, class_weight='balanced')
+    def train_log_reg(self, n_iter):
+        lg=LogisticRegression(max_iter=n_iter, class_weight='balanced')
         lg.fit(self.x_train, self.y_train)
 
         pred=lg.predict(self.x_test)
@@ -68,10 +68,10 @@ class ModelTrain:
         plt.show()
 
 
-    def train_and_evaluate_models(self, X_train, y_train, X_test, y_test):
+    def train_and_evaluate_models(self):
 
-        X_train = clean_column_names(X_train)
-        X_test = clean_column_names(X_test)
+        X_train = clean_column_names(self.x_train)
+        X_test = clean_column_names(self.x_test)
 
         model_dict = {
             "Random_Forest": (RandomForestClassifier(random_state=42, class_weight='balanced'),
@@ -81,7 +81,7 @@ class ModelTrain:
                 }
             ),
             "XGBoost": (
-                XGBClassifier(random_state=42, eval_metric='logloss'),
+                XGBClassifier(random_state=42, eval_metric='logloss', scale_pos_weight=10),
                 {
                     "n_estimators":[100, 200],
                     "max_depth":[4, 6],
@@ -105,7 +105,7 @@ class ModelTrain:
             
            
             grid = GridSearchCV(model, params, cv=3, scoring='average_precision', n_jobs=-1)
-            grid.fit(X_train, y_train)
+            grid.fit(X_train, self.y_train)
             
             best_model = grid.best_estimator_
             best_models[name] = best_model
@@ -115,17 +115,17 @@ class ModelTrain:
             preds = best_model.predict(X_test)
             preds_prob = best_model.predict_proba(X_test)[:, 1]  
 
-            cm = confusion_matrix(y_test, preds)
+            cm = confusion_matrix(self.y_test, preds)
             
             print("\n" + "="*50)
             print(f"PERFORMANCE METRICS FOR: {name.upper()}")
             print("="*50)
-            print(f"The AUC ROC Score:             {roc_auc_score(y_test, preds_prob):.4f}")
-            print(f"The Average Precision Score:   {average_precision_score(y_test, preds_prob):.4f}")
-            print(f"The F1 Score:                  {f1_score(y_test, preds):.4f}")
-            print(f"Accuracy:                      {accuracy_score(y_test, preds):.4f}")
-            print(f"Precision (Fraud Class):       {precision_score(y_test, preds):.4f}")
-            print(f"Recall (Fraud Class):          {recall_score(y_test, preds):.4f}")
+            print(f"The AUC ROC Score:             {roc_auc_score(self.y_test, preds_prob):.4f}")
+            print(f"The Average Precision Score:   {average_precision_score(self.y_test, preds_prob):.4f}")
+            print(f"The F1 Score:                  {f1_score(self.y_test, preds):.4f}")
+            print(f"Accuracy:                      {accuracy_score(self.y_test, preds):.4f}")
+            print(f"Precision (Fraud Class):       {precision_score(self.y_test, preds):.4f}")
+            print(f"Recall (Fraud Class):          {recall_score(self.y_test, preds):.4f}")
             print("-"*50)
             print(f"True Negatives (Clean Allowed):   {cm[0][0]}")
             print(f"False Positives (Innocent Blocked): {cm[0][1]}")
@@ -133,7 +133,7 @@ class ModelTrain:
             print(f"True Positives (Fraud Caught):     {cm[1][1]}")
             print("-"*50)
             print("Detailed Classification Report:")
-            print(classification_report(y_test, preds, target_names=['Not Fraud', 'Fraud']))
+            print(classification_report(self.y_test, preds, target_names=['Not Fraud', 'Fraud']))
 
             fig, axes = plt.subplots(1, 2, figsize=(14, 5))
             
@@ -151,7 +151,7 @@ class ModelTrain:
             axes[0].set_xlabel("Model Predictions")
 
             PrecisionRecallDisplay.from_predictions(
-                y_test, preds_prob, name=name, ax=axes[1]
+                self.y_test, preds_prob, name=name, ax=axes[1]
             )
             axes[1].set_title(f"{name}: Precision-Recall Curve (AUC-PR)", fontsize=12, pad=10)
             axes[1].grid(True, linestyle='--', alpha=0.5)
@@ -163,4 +163,5 @@ class ModelTrain:
         return best_models
     
 
-    
+    def cross_validate(self, X_train, y_train, X_test, y_test):
+        stk=StratifiedKFold(n_splits=5)
