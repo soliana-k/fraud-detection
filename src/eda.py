@@ -1,9 +1,6 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from imblearn.over_sampling import SMOTE
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.model_selection import train_test_split
 import logging
 import os
 from typing import Optional, Tuple
@@ -402,121 +399,8 @@ class GeolocationIntegrator:
         return merged
 
 
-class FeatureEngineer:
-    """
-    Creates new features specifically for the Fraud dataset.
-    """
-    def engineer(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Perform feature engineering on fraud transaction data.
-        
-        Args:
-            df (pd.DataFrame): Input DataFrame with timestamp columns.
-        
-        Returns:
-            pd.DataFrame: DataFrame with engineered features.
-        """
-        df = df.copy()
-        if all(col in df.columns for col in ['purchase_time', 'signup_time']):
-            df['hour_of_day'] = df['purchase_time'].dt.hour
-            df['day_of_week'] = df['purchase_time'].dt.dayofweek
-            df['time_since_signup'] = (df['purchase_time'] - df['signup_time']).dt.total_seconds()
-            df['transaction_frequency'] = df.groupby('user_id')['user_id'].transform('count')
-            df = df.drop(['signup_time', 'purchase_time', 'device_id'], axis=1, errors='ignore')
-        return df
 
-
-class DataPreprocessor:
-    """
-    Handles scaling and encoding. Skips scaling for CreditCard dataset 
-    (already PCA-transformed).
-    """
-    def preprocess(self, X_train: pd.DataFrame, X_test: pd.DataFrame, is_fraud: bool) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Preprocess data: scale numerical features (if fraud) and one-hot encode categoricals.
-        Fit only on training data.
-        
-        Args:
-            X_train (pd.DataFrame): Training features.
-            X_test (pd.DataFrame): Test features.
-            is_fraud (bool): Whether this is the Fraud dataset.
-        
-        Returns:
-            Tuple[pd.DataFrame, pd.DataFrame]: Preprocessed X_train, X_test.
-        """
-        X_train = X_train.copy().reset_index(drop=True)
-        X_test = X_test.copy().reset_index(drop=True)
-
-        if is_fraud:
-            scaler = StandardScaler()
-            num_cols = X_train.select_dtypes(include=['float64', 'int64']).columns
-            cols_to_scale = [c for c in num_cols if c not in ['class', 'Class', 'user_id']]
-            if cols_to_scale:
-                X_train[cols_to_scale] = scaler.fit_transform(X_train[cols_to_scale])
-                X_test[cols_to_scale] = scaler.transform(X_test[cols_to_scale])
-        else:
-            logger.info("CreditCard: Skipping scaling (already PCA transformed)")
-
-        # One got encoding
-        cat_cols = ['source', 'browser', 'sex', 'country']
-        cat_cols = [c for c in cat_cols if c in X_train.columns]
-        if cat_cols:
-            encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
-            encoded_train = encoder.fit_transform(X_train[cat_cols])
-            encoded_test = encoder.transform(X_test[cat_cols])
-            encoded_train_df = pd.DataFrame(encoded_train, 
-                                          columns=encoder.get_feature_names_out(cat_cols),
-                                          index=X_train.index)
-            encoded_test_df = pd.DataFrame(encoded_test, 
-                                         columns=encoder.get_feature_names_out(cat_cols),
-                                         index=X_test.index)
-            X_train = X_train.drop(columns=cat_cols)
-            X_test = X_test.drop(columns=cat_cols)
-
-            X_train = pd.concat([X_train, encoded_train_df], axis=1)
-            X_test = pd.concat([X_test, encoded_test_df], axis=1)
-
-        return X_train, X_test
-
-
-class ImbalanceHandler:
-    """
-    Handles class imbalance using SMOTE and provides before/after visualization.
-    """
-    def handle(self, X_train, y_train, X_test, y_test):
-        """
-        Apply SMOTE oversampling to balance the training set.
-        
-        Args:
-            X_train, y_train: Training data
-            X_test, y_test: Test data
-        
-        Returns:
-            Tuple containing: X_train_res, y_train_res, X_test, y_test
-        """
-        smote = SMOTE(random_state=42)
-        X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
-
-        print(f'Training shape before SMOTE: {X_train.shape}')
-        print(f"Resampled Training Shape after SMOTE: {X_train_res.shape}")
-
-        self._plot_imbalance(y_train, y_train_res)
-        return X_train_res, y_train_res, X_test, y_test
-
-    def _plot_imbalance(self, y_before, y_after):
-
-        """Private method to visualize class distribution before and after SMOTE."""
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-        pd.Series(y_before).value_counts().plot(kind='bar', ax=ax1, color=['skyblue', 'salmon'])
-        ax1.set_title('Before SMOTE')
-        pd.Series(y_after).value_counts().plot(kind='bar', ax=ax2, color=['skyblue', 'salmon'])
-        ax2.set_title('After SMOTE')
-        plt.tight_layout()
-        plt.show()
-
-
-class FraudDetectionPipeline:
+class EdaPipeline:
     """
     Main orchestrator class that coordinates the entire fraud detection pipeline.
     Supports both Fraud (with IP mapping) and CreditCard datasets.
@@ -533,12 +417,9 @@ class FraudDetectionPipeline:
         self.cleaner = DataCleaner()
         self.geo = GeolocationIntegrator()
         self.eda = EDAVisualizer()
-        self.feature_eng = FeatureEngineer()
-        self.preprocessor = DataPreprocessor()
-        self.balancer = ImbalanceHandler()
         self.is_fraud = self.loader.is_fraud
 
-    def run(self):
+    def run(self, save_fraud_path: str='../data/processed/processedFraudData.csv', save_credit_path: str='../data/processed/processedCreditData.csv'):
         """
         Execute the full pipeline: load → geo (if fraud) → EDA → clean → split → engineer → preprocess → balance.
         
@@ -560,26 +441,14 @@ class FraudDetectionPipeline:
         self.eda.plot_categorical(df)
 
         df = self.cleaner.clean(df)
-
-        
-        target_col = next((c for c in ['class', 'Class'] if c in df.columns), None)
-        if not target_col:
-            raise ValueError("Target column not found.")
-        
-        X = df.drop(columns=[target_col])
-        y = df[target_col]
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, 
-            test_size=0.2, 
-            random_state=42, 
-            stratify=y
-        )
-
         if self.is_fraud:
-            X_train = self.feature_eng.engineer(X_train)
-            X_test = self.feature_eng.engineer(X_test)  
-
-        X_train, X_test = self.preprocessor.preprocess(X_train, X_test, self.is_fraud)
-
-        return self.balancer.handle(X_train, y_train, X_test, y_test)
+            os.makedirs(os.path.dirname(save_fraud_path), exist_ok=True)
+            df.to_csv(save_fraud_path, index=False)
+            logger.info(f"Processed data saved to {save_fraud_path}")
+            return df
+        else:
+            os.makedirs(os.path.dirname(save_credit_path), exist_ok=True)
+            df.to_csv(save_credit_path, index=False)
+            logger.info(f"Processed data saved to {save_credit_path}")
+            return df
+       
