@@ -1,12 +1,14 @@
 # Fraud Detection ML Pipeline
 
-A machine learning pipeline for detecting fraudulent transactions using e-commerce and credit card transaction data. This repository currently covers **Task 1: data analysis and preprocessing** & **Task 2: Model Training & Evaluation** .
+A machine learning pipeline for detecting fraudulent transactions using e-commerce and credit card transaction data. This repository currently covers **Task 1: data analysis and preprocessing**, **Task 2: Model Training & Evaluation**, and **Task 3: Model Explainability** .
 
 ---
 
 ## Project overview
 
 This project builds a fraud detection system across two datasets with different characteristics, a raw e-commerce transaction dataset requiring full preprocessing, and a PCA-preprocessed credit card dataset. The pipeline handles data cleaning, exploratory analysis, geolocation enrichment, feature engineering, and class imbalance correction in preparation for model training.
+
+The end-to-end pipeline includes data cleaning, EDA, feature engineering, class imbalance handling, model training with hyperparameter tuning, and **SHAP-based model explainability** to generate actionable business insights.
 
 ---
 
@@ -25,18 +27,19 @@ This project builds a fraud detection system across two datasets with different 
 ## Repository structure
 
 ```
-├── data/                   # Raw data files (gitignored)
+├── data/                  
 ├── notebooks/
 │   ├── eda_fraud.ipynb
 │   └── eda_creditcard.ipynb
+│   └── shap_explainability.ipynb
 │   ├── ml_fraud.ipynb
 │   └── ml_credit_card.ipynb
 ├── src/
 │   ├── preprocessing.py           
 │   ├── model_train.py 
-│   └── eda.py              # Core EDA and preprocessing class
+│   └── eda.py              
 ├── scripts/
-│   └── run_pipeline.py     # Entry point to run the full pipeline
+│   └── run_pipeline.py     
 ├── models/
 │   ├── creditcard/                
 │   └── fraud/                     
@@ -78,19 +81,36 @@ Place `Fraud_Data.csv`, `creditcard.csv`, and `IpAddress_to_Country.csv` in the 
 
 ## Usage
 
+### EDA
 ```python
 from src.eda import EdaPipeline
 
 # Fraud_Data.csv — full pipeline including geolocation
 fraud_eda = EdaPipeline(
-    fraud_filepath='data/Fraud_Data.csv',
-    ip_filepath='data/IpAddress_to_Country.csv'
+    'data/Fraud_Data.csv',
+    'data/IpAddress_to_Country.csv'
 )
-X_train, y_train, X_test, y_test = fraud_eda.run()
+fraud_eda.run()
 
-# creditcard.csv — skips transformation (already PCA-scaled)
-cc_eda = EdaPipeline(fraud_filepath='data/creditcard.csv')
-X_train, y_train, X_test, y_test = cc_eda.run()
+# creditcard.csv —
+cc_eda = EdaPipeline('data/creditcard.csv')
+cc_eda.run()
+```
+### Preprocessing and Modelling
+
+```python
+from src.preprocessing import FraudDetectionPipeline
+from src.model_train import ModelTrain
+
+# Preprocessing + Feature Engineering
+fraud_pipeline = FraudDetectionPipeline('data/processed/processedFraud_Data.csv') # or could be the processed creditcard data
+X_train_f, y_train_f, X_test_f, y_test_f = fraud_pipeline.run()
+
+# Model Training & Evaluation
+trainer = ModelTrain(X_train_f, y_train_f, X_test_f, y_test_f)
+lg= trainer.train_log_reg() # train baseline logistic regression model
+best_models = trainer.train_and_evaluate_models() # train random forest, xgboost and lightgbm 
+trainer.compare_all_models(best_models=best_models) # cross validate all the ensemble models and print comparison table
 ```
 
 ---
@@ -104,12 +124,11 @@ X_train, y_train, X_test, y_test = cc_eda.run()
 5. **Train/Test Split + Preprocessing**
 6. **SMOTE Balancing (Training only)**
 7. **Model Training + Hyperparameter Tuning**
-8. **Business-Oriented Evaluation** (Precision-Recall tradeoff, cost implications)
+8. **Business-Oriented Evaluation** (Precision-Recall tradeoff)
 
 ---
 
 
----
 
 ## What Was Done
 
@@ -139,6 +158,32 @@ X_train, y_train, X_test, y_test = cc_eda.run()
 
 **Models are saved** in the `models/creditcard/` and `models/fraud/` directories for future deployment/explainability.
 
+### Task 3: Model Explainability (Completed)
+SHAP (SHapley Additive exPlanations) was used to interpret the best models (`LightGBM` for Fraud_Data and `XGBoost` for Creditcard).
+
+#### Fraud_Data → LightGBM Explainability Highlights
+- **Dominant Feature**: `time_since_signup` — by far the strongest predictor. Very short account age dramatically increases fraud probability.
+- Other key drivers: `hour_of_day`, `day_of_week`, `country_target_enc`, `purchase_value`.
+- The model excels at catching "velocity" fraud (new accounts acting immediately) but can miss sophisticated/account-takeover fraud on aged accounts.
+
+**Business Recommendations**:
+1. **Dynamic Step-Up Authentication** for new accounts: Trigger MFA/ID verification when `time_since_signup` is low.
+2. **Automated High-Precision Blocking**: Use LightGBM’s near-perfect precision to auto-block very high-risk scores.
+3. **Behavioral Velocity Features**: Add features like device changes, IP distance, or transaction spikes on mature accounts to reduce the ~48% missed fraud (False Negatives).
+
+#### Creditcard → XGBoost Explainability Highlights
+- **Top Drivers**: `V14`, `V4`, `V12`, `V11` — strong structural signals of fraudulent patterns.
+- `Amount` and `Time` have minimal impact, helping suppress false positives on legitimate large transactions.
+- The model requires coordinated risk signals across multiple V-features before flagging.
+
+**Business Recommendations**:
+1. **Automated Action for High Scores**: Auto-block or trigger MFA when score > 0.85 (leveraging 0.89 precision).
+2. **Velocity & Behavioral Features**: Add `card_velocity_1h`, declined attempts sequence, and country mismatch to close the 20% fraud leakage.
+3. **Upstream Hard Rules**: Create gateway rules based on extreme values in `V14`/`V4` for early filtering.
+
+**Full SHAP analysis** (Summary plots, Force plots for TP/FP/FN cases, and detailed interpretations) is available in `notebooks/shap_explainability.ipynb`.
+
+
 ---
 
 
@@ -146,8 +191,8 @@ X_train, y_train, X_test, y_test = cc_eda.run()
 
 - [x] Task 1: Data analysis and preprocessing
 - [x] Task 2: Model training and evaluation
-- [ ] Task 3: Model explainability
-<!-- - [ ] Task 4: API deployment -->
+- [x] Task 3: Model explainability
+
 
 ---
 
@@ -161,6 +206,10 @@ See `requirements.txt`. Key dependencies:
 - `imbalanced-learn`
 - `matplotlib`
 - `seaborn`
+- `shap`
+- `xgboost`
+- `lightgbm`
+- `category_encoders`
 
 
 ## Model Results Summary
@@ -194,4 +243,3 @@ Fraud detection requires careful balancing:
 - Future work will include threshold tuning based on average fraud amount vs. review cost.
 
 ---
-
