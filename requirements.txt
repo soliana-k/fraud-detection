@@ -11,3 +11,4 @@ lightgbm
 imblearn
 jupyter
 ipykernel
+category_encoders
