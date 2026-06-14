@@ -1,6 +1,5 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 from imblearn.over_sampling import SMOTENC, SMOTE
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.model_selection import train_test_split
@@ -64,22 +63,7 @@ class FeatureEngineer:
         ).dt.total_seconds()
 
         
-        df['transaction_frequency'] = df.groupby('user_id')['user_id'].transform('count')
-        logger.info(
-            f"transaction_frequency — "
-            f"min={df['transaction_frequency'].min()}, "
-            f"max={df['transaction_frequency'].max()}, "
-            f"mean={df['transaction_frequency'].mean():.2f}, "
-            f"nunique={df['transaction_frequency'].nunique()}"
-        )
-        if 'country' in df.columns:
-            logger.info("Applying Target Encoding to 'country'...")
-            te = TargetEncoder(cols=['country'], smoothing=10, min_samples_leaf=5)
-            df['country_target_enc'] = te.fit_transform(df['country'], df['class'])['country']
-            df = df.drop(columns=['country'])
-
-        
-        df = df.drop(['signup_time', 'purchase_time', 'user_id', 'device_id'],
+        df = df.drop(['signup_time', 'purchase_time', 'device_id'],
                      axis=1, errors='ignore')
         
         logger.info('Ran Feature Engineering.......')
@@ -92,16 +76,21 @@ class DataPreprocessor:
     Scaling is skipped for the CreditCard dataset (already PCA-transformed).
     """
 
-    def __init__(self):
+    def __init__(self, country_encoding: str = 'target'):
+        """
+        Args:
+            country_encoding: 'target' (default) or 'onehot'
+        """
+        if country_encoding not in ['target', 'onehot']:
+            raise ValueError("country_encoding must be either 'target' or 'onehot'")
+        
+        self.country_encoding = country_encoding
         self.scaler = StandardScaler()
         self.encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+        self.target_encoder = None
+        self.user_freq_map = None
 
-    def preprocess(
-        self,
-        X_train: pd.DataFrame,
-        X_test: pd.DataFrame,
-        is_fraud: bool,
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def preprocess(self, X_train: pd.DataFrame, X_test: pd.DataFrame, y_train: pd.Series, is_fraud: bool, ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
 
         Args:
@@ -114,12 +103,46 @@ class DataPreprocessor:
         """
         X_train = X_train.copy().reset_index(drop=True)
         X_test = X_test.copy().reset_index(drop=True)
+        y_train = y_train.reset_index(drop=True)
 
-        for df_ in (X_train, X_test):
-            if 'user_id' in df_.columns:
-                df_.drop(columns=['user_id'], inplace=True)
+        if 'user_id' in X_train.columns:
+            logger.info("Computing transaction_frequency (train only)...")
+        
+            freq_series = X_train.groupby('user_id')['user_id'].transform('count')
+            self.user_freq_map = X_train.groupby('user_id').size().to_dict()
+            
+            X_train['transaction_frequency'] = freq_series
+            X_test['transaction_frequency'] = X_test['user_id'].map(self.user_freq_map).fillna(1)
+
+            X_train = X_train.drop(columns=['user_id'])
+            X_test = X_test.drop(columns=['user_id'])
+
+        
+
+        if 'country' in X_train.columns:
+            if self.country_encoding == 'target':
+                logger.info("Applying Target Encoding to 'country'...")
+                self.target_encoder = TargetEncoder(
+                    cols=['country'], smoothing=10, min_samples_leaf=5
+                )
+                
+                X_train['country_target_enc'] = self.target_encoder.fit_transform(
+                    X_train['country'], y_train
+                )['country']
+                
+                X_test['country_target_enc'] = self.target_encoder.transform(
+                    X_test['country']
+                )['country']
+                
+                X_train = X_train.drop(columns=['country'])
+                X_test = X_test.drop(columns=['country'])
+
+            elif self.country_encoding == 'onehot':
+                logger.info("Applying One-Hot Encoding to 'country'...")
 
         known_cat_cols = ['source', 'browser', 'sex']
+        if self.country_encoding == 'onehot' and 'country' in X_train.columns:
+            known_cat_cols.append('country')
         inferred_cat_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
         cat_cols = list(dict.fromkeys(known_cat_cols + inferred_cat_cols))
         cat_cols = [c for c in cat_cols if c in X_train.columns]
@@ -135,7 +158,7 @@ class DataPreprocessor:
             ]
 
             
-            num_cols = [c for c in candidate_cols if X_train[c].std() > 0]
+            num_cols = [c for c in candidate_cols if X_train[c].std() > 1e-8]
             skipped = [c for c in candidate_cols if c not in num_cols]
             if skipped:
                 logger.warning(
@@ -157,7 +180,7 @@ class DataPreprocessor:
 
             X_train = pd.concat([X_train.drop(columns=cat_cols), encoded_train_df], axis=1)
             X_test  = pd.concat([X_test.drop(columns=cat_cols),  encoded_test_df],  axis=1)
-            logger.info('One Hot Encoging done....')
+            logger.info(f'One-Hot Encoding applied to {len(cat_cols)} columns: {cat_cols}')
         return X_train, X_test
     
 
@@ -222,14 +245,15 @@ class FraudDetectionPipeline:
     Orchestrates the full preprocessing pipeline for Fraud and CreditCard datasets.
     """
 
-    def __init__(self, processed_data_path: str, is_fraud: bool):
+    def __init__(self, processed_data_path: str, is_fraud: bool, country_encoding: str = 'target'):
         """
         Args:
             processed_data_path: Path to the CSV saved by EdaPipeline.
             is_fraud: True for Fraud dataset, False for CreditCard.
+            country_encoding: 'target' (default) or 'onehot'
         """
         self.feature_eng = FeatureEngineer(processed_data_path)
-        self.preprocessor = DataPreprocessor()
+        self.preprocessor = DataPreprocessor(country_encoding=country_encoding)
         self.balancer = ImbalanceHandler()
         self.is_fraud = is_fraud
 
@@ -263,6 +287,6 @@ class FraudDetectionPipeline:
             stratify=y,
         )
 
-        X_train, X_test = self.preprocessor.preprocess(X_train, X_test, self.is_fraud)
+        X_train, X_test = self.preprocessor.preprocess(X_train, X_test, y_train, self.is_fraud)
 
         return self.balancer.handle(X_train, y_train, X_test, y_test)

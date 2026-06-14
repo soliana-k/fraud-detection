@@ -103,7 +103,9 @@ from src.preprocessing import FraudDetectionPipeline
 from src.model_train import ModelTrain
 
 # Preprocessing + Feature Engineering
-fraud_pipeline = FraudDetectionPipeline('data/processed/processedFraud_Data.csv') # or could be the processed creditcard data
+fraud_pipeline = FraudDetectionPipeline('data/processed/processedFraud_Data.csv', is_fraud=True,
+    country_encoding='target'   # 'target' or 'onehot' 
+ ) # or could be the processed creditcard data
 X_train_f, y_train_f, X_test_f, y_test_f = fraud_pipeline.run()
 
 # Model Training & Evaluation
@@ -142,6 +144,13 @@ trainer.compare_all_models(best_models=best_models) # cross validate all the ens
   - `time_since_signup`
   - `transaction_frequency` per user
   - Target encoding on `country`
+
+**Why Target Encoding was chosen over One-Hot for `country`**:
+- **Better primary metrics**: Higher or equal Average Precision (PR-AUC) and F1-score — the two most important metrics for this project.
+- **Superior for tree-based models**: LightGBM and XGBoost perform better with Target Encoding.
+- **Efficiency**: Avoids high cardinality problems (many dummy columns) that One-Hot Encoding creates with 200+ countries.
+- **More stable generalization**: Shown in both test set and cross-validation results.
+- One-Hot Encoding only showed marginal gains in Logistic Regression but performed slightly worse overall on PR-AUC and F1 for the best models.
 - **Preprocessing**: Scaling (StandardScaler), One-Hot Encoding, handling of categorical features.
 - **Class Imbalance Handling**: SMOTE / SMOTENC applied **only on training set** (sampling strategy = 0.5).
 
@@ -155,6 +164,20 @@ trainer.compare_all_models(best_models=best_models) # cross validate all the ens
 - Comprehensive evaluation: AUC-ROC, PR-AUC, F1-score, Precision, Recall, Confusion Matrices, Precision-Recall curves.
 - Cross-validation (Stratified K-Fold) for robust performance estimation.
 - Business-focused analysis: Precision-Recall tradeoff, false positive costs, operational impact.
+
+#### Fraud_Data Dataset – Test Set Results (Target Encoding)
+
+| Model                  | Avg Precision | F1-Score (Fraud) | Precision | Recall | TP   | FP  | FN   | Accuracy |
+|------------------------|---------------|------------------|-----------|--------|------|-----|------|----------|
+| Logistic Regression    | 0.3937        | 0.2821           | 0.18      | 0.70   | 1977 | 9208| 853  | 0.67     |
+| Random Forest          | 0.6159        | 0.6767           | 0.95      | 0.5244 | 1484 | 72  | 1346 | 0.95     |
+| XGBoost                | 0.6087        | 0.6721           | 0.93      | 0.5261 | 1489 | 112 | 1341 | 0.95     |
+| **LightGBM**           | **0.6212**    | **0.6866**       | **1.00**  | 0.5233 | 1481 | **3**| 1349 | **0.96** |
+
+**Cross-Validation Highlights (5-fold Stratified)**:
+- **LightGBM**: Avg Precision **0.9586 ± 0.0012** | F1 **0.9462 ± 0.0013** | Recall 0.8980
+- **XGBoost**: Avg Precision 0.9578 | F1 0.9320
+
 
 **Models are saved** in the `models/creditcard/` and `models/fraud/` directories for future deployment/explainability.
 
@@ -220,11 +243,11 @@ See `requirements.txt`. Key dependencies:
 - Highest F1-score (0.8444) and excellent precision (0.89) with only **9 false positives**.
 - Strong balance between catching fraud and minimizing customer friction.
 
-### 2. Fraud_Data Dataset (Moderately Imbalanced)
+### 2. Fraud_Data Dataset (Target Encoding)
 **Best Model: LightGBM**
-
-- Highest F1-score (0.6874), near-perfect precision (**1.00**), and only **2 false positives**.
-- Most operationally efficient model for this dataset.
+- Highest Average Precision (**0.6212**) and F1-score (**0.6866**).
+- Near-perfect precision (1.00) with only **3 false positives**.
+- Excellent operational efficiency.
 
 **Full detailed comparison reports** are available in the respective notebooks (`ml_fraud.ipynb` and `ml_creditcard.ipynb`).
 
@@ -232,6 +255,12 @@ See `requirements.txt`. Key dependencies:
 
 
 ## Precision-Recall Tradeoff & Business Implications
+
+**LightGBM with Target Encoding** provides the best balance:
+- Extremely low false positives (only 3) → minimal customer friction.
+- Strong fraud capture capability.
+- Highest scores on the primary metrics (Avg Precision & F1).
+
 
 Fraud detection requires careful balancing:
 - **High Recall** → Catch more fraud → Higher financial protection but more false alarms (customer frustration + review costs).
@@ -243,3 +272,4 @@ Fraud detection requires careful balancing:
 - Future work will include threshold tuning based on average fraud amount vs. review cost.
 
 ---
+
