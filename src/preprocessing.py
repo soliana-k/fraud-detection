@@ -242,7 +242,8 @@ class ImbalanceHandler:
 
 class FraudDetectionPipeline:
     """
-    Orchestrates the full preprocessing pipeline for Fraud and CreditCard datasets.
+    Orchestrated preprocessing pipeline for Fraud and CreditCard datasets.
+    Refactored to support explicit train-test splitting outside the class.
     """
 
     def __init__(self, processed_data_path: str, is_fraud: bool, country_encoding: str = 'target'):
@@ -257,16 +258,10 @@ class FraudDetectionPipeline:
         self.balancer = ImbalanceHandler()
         self.is_fraud = is_fraud
 
-    def run(self) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
+    def load_and_engineer(self) -> Tuple[pd.DataFrame, pd.Series]:
         """
-        Pipeline: load → engineer (full df) → split → preprocess → balance
-
-        engineer_full runs on the complete dataframe before splitting so that
-        transaction_frequency has real variance and temporal features are
-        derived from timestamps that would otherwise be lost after the split.
-
-        Returns:
-            Tuple: (X_train_resampled, y_train_resampled, X_test, y_test)
+        Step 1: Loads data and runs full feature engineering before data splitting.
+        Returns X and y.
         """
         df = self.feature_eng.load_data()
 
@@ -279,14 +274,15 @@ class FraudDetectionPipeline:
 
         X = df.drop(columns=[target_col])
         y = df[target_col]
+        return X, y
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y,
-            test_size=0.2,
-            random_state=42,
-            stratify=y,
+    def preprocess_and_balance(
+        self, X_train: pd.DataFrame, X_test: pd.DataFrame, y_train: pd.Series, y_test: pd.Series
+    ) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
+        """
+        Step 2: Preprocesses the explicitly split data segments and applies SMOTE.
+        """
+        X_train_proc, X_test_proc = self.preprocessor.preprocess(
+            X_train, X_test, y_train, self.is_fraud
         )
-
-        X_train, X_test = self.preprocessor.preprocess(X_train, X_test, y_train, self.is_fraud)
-
-        return self.balancer.handle(X_train, y_train, X_test, y_test)
+        return self.balancer.handle(X_train_proc, y_train, X_test_proc, y_test)
